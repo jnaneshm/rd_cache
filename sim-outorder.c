@@ -219,6 +219,9 @@ static int res_fpalu;
 /* total number of floating point multiplier/dividers available */
 static int res_fpmult;
 
+/* pdp: static rd */
+static int static_rd;
+
 /* text-based stat profiles */
 #define MAX_PCSTAT_VARS 8
 static int pcstat_nelt = 0;
@@ -737,7 +740,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:dl1",
 		 "l1 data cache config, i.e., {<config>|none}",
-		 &cache_dl1_opt, "dl1:128:32:4:l",
+		 &cache_dl1_opt, "dl1:128:32:4:p",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -872,6 +875,11 @@ sim_reg_options(struct opt_odb_t *odb)
   opt_reg_flag(odb, "-bugcompat",
 	       "operate in backward-compatible bugs mode (for testing only)",
 	       &bugcompat_mode, /* default */FALSE, /* print */TRUE, NULL);
+
+  opt_reg_int(odb, "-pdp:static",
+	      "static PDP reuse distance",
+	      &static_rd, /* default */0,
+	      /* print */TRUE, /* format */NULL);
 }
 
 /* check simulator-specific option values */
@@ -1014,9 +1022,9 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       if (sscanf(cache_dl1_opt, "%[^:]:%d:%d:%d:%c",
 		 name, &nsets, &bsize, &assoc, &c) != 5)
 	fatal("bad l1 D-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
-      cache_dl1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
+      cache_dl1 = cache_create_pdp(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
-			       dl1_access_fn, /* hit lat */cache_dl1_lat);
+			       dl1_access_fn, /* hit lat */cache_dl1_lat,static_rd);
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_dl2_opt, "none"))
@@ -2186,8 +2194,9 @@ ruu_commit(void)
 		    {
 		      /* commit store value to D-cache */
 		      lat =
-			cache_access(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
-				     NULL, 4, sim_cycle, NULL, NULL);
+			cache_access_pdp(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
+				     NULL, 4, sim_cycle, NULL, NULL,1);
+			if(lat<0) break; /*drd: cache not avialable */
 		      if (lat > cache_dl1_lat)
 			events |= PEV_CACHEMISS;
 		    }
@@ -2613,7 +2622,7 @@ ruu_issue(void)
   int i, load_lat, tlb_lat, n_issued;
   struct RS_link *node, *next_node;
   struct res_template *fu;
-
+  int cache_unavailable = 0;
   /* FIXME: could be a little more efficient when scanning the ready queue */
 
   /* copy and then blow away the ready list, NOTE: the ready list is
@@ -2675,6 +2684,7 @@ ruu_issue(void)
 		  fu = res_get(fu_pool, MD_OP_FUCLASS(rs->op));
 		  if (fu)
 		    {
+		      cache_unavailable = 0;
 		      /* got one! issue inst to functional unit */
 		      rs->issued = TRUE;
 		      /* reserve the functional unit */
@@ -2731,9 +2741,16 @@ ruu_issue(void)
 				{
 				  /* access the cache if non-faulting */
 				  load_lat =
-				    cache_access(cache_dl1, Read,
+				    cache_access_pdp(cache_dl1, Read,
 						 (rs->addr & ~3), NULL, 4,
-						 sim_cycle, NULL, NULL);
+						 sim_cycle, NULL, NULL,1);
+				  if (load_lat < 0)
+				  {
+					printf("PDP:cache_unavailable!\n");
+					cache_unavailable = 1;
+                                        rs->issued = FALSE;
+                                        readyq_enqueue(rs);
+				  }
 				  if (load_lat > cache_dl1_lat)
 				    events |= PEV_CACHEMISS;
 				}
@@ -2745,7 +2762,7 @@ ruu_issue(void)
 			    }
 
 			  /* all loads and stores must to access D-TLB */
-			  if (dtlb && MD_VALID_ADDR(rs->addr))
+			  if (!cache_unavailable && dtlb && MD_VALID_ADDR(rs->addr))
 			    {
 			      /* access the D-DLB, NOTE: this code will
 				 initiate speculative TLB misses */
@@ -2759,6 +2776,8 @@ ruu_issue(void)
 			      load_lat = MAX(tlb_lat, load_lat);
 			    }
 
+			 if (!cache_unavailable)
+			 {
 			  /* use computed cache access latency */
 			  eventq_queue_event(rs, sim_cycle + load_lat);
 
@@ -2766,6 +2785,7 @@ ruu_issue(void)
 			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE,
 					  ((rs->ea_comp ? PEV_AGEN : 0)
 					   | events));
+			 }
 			}
 		      else /* !load && !store */
 			{

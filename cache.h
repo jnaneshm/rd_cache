@@ -211,6 +211,7 @@ struct cache_t
   /* NOTE: this is a variable-size tail array, this must be the LAST field
      defined in this structure! */
   struct cache_set_t sets[1];	/* each entry is a set */
+  int rd; /* drd: reuse distance */
 };
 /* create and initialize a general cache structure */
 struct cache_t *                        /* pointer to cache created */
@@ -281,6 +282,16 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	     tick_t now,		/* time of access */
 	     byte_t **udata,		/* for return of user data ptr */
 	     md_addr_t *repl_addr);	/* for address of replaced block */
+unsigned int                            /* latency of access in cycles */
+cache_access_pdp(struct cache_t *cp,    /* cache to access */
+             enum mem_cmd cmd,          /* access type, Read or Write */
+             md_addr_t addr,            /* address of access */
+             void *vp,                  /* ptr to buffer for input/output */
+             int nbytes,                /* number of bytes to access */
+             tick_t now,                /* time of access */
+             byte_t **udata,            /* for return of user data ptr */
+             md_addr_t *repl_addr,      /* for address of replaced block */
+             int pdp);                   /* drd:PDP on or off */
 
 /* cache access functions, these are safe, they check alignment and
    permissions */

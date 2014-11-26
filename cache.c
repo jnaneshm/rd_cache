@@ -289,7 +289,7 @@ cache_create_pdp(char *name,		/* name of the cache */
 					   struct cache_blk_t *blk,
 					   tick_t now),
 	     unsigned int hit_latency,/* latency in cycles for a hit */
-	     int rpd)	/* drd:remaining pd */
+	     int rd)	/* drd:reuse distance */
 {
   struct cache_t *cp;
   struct cache_blk_t *blk;
@@ -362,6 +362,8 @@ cache_create_pdp(char *name,		/* name of the cache */
   cp->last_tagset = 0;
   cp->last_blk = NULL;
 
+  cp->rd = rd; /* drd: reuse distance */
+
   /* allocate data blocks */
   cp->data = (byte_t *)calloc(nsets * assoc,
 			      sizeof(struct cache_blk_t) +
@@ -399,7 +401,7 @@ cache_create_pdp(char *name,		/* name of the cache */
 	  /* invalidate new cache block */
 	  blk->status = 0;
 	  blk->tag = 0;
-	  blk->rpd = rpd; 
+	  blk->rpd = 0; 
 	  blk->ready = 0;
 	  blk->user_data = (usize != 0
 			    ? (byte_t *)calloc(usize, sizeof(byte_t)) : NULL);
@@ -511,21 +513,33 @@ cache_stats(struct cache_t *cp,		/* cache instance */
 	  (double)cp->misses/sum, (double)(double)cp->replacements/sum,
 	  (double)cp->invalidations/sum);
 }
-
+unsigned int                            /* latency of access in cycles */
+cache_access(struct cache_t *cp,        /* cache to access */
+             enum mem_cmd cmd,          /* access type, Read or Write */
+             md_addr_t addr,            /* address of access */
+             void *vp,                  /* ptr to buffer for input/output */
+             int nbytes,                /* number of bytes to access */
+             tick_t now,                /* time of access */
+             byte_t **udata,            /* for return of user data ptr */
+             md_addr_t *repl_addr)      /* for address of replaced block */
+{
+	return cache_access_pdp(cp,cmd,addr,vp,nbytes,now,udata,repl_addr,0);
+}
 /* access a cache, perform a CMD operation on cache CP at address ADDR,
    places NBYTES of data at *P, returns latency of operation if initiated
    at NOW, places pointer to block user data in *UDATA, *P is untouched if
    cache blocks are not allocated (!CP->BALLOC), UDATA should be NULL if no
    user data is attached to blocks */
 unsigned int				/* latency of access in cycles */
-cache_access(struct cache_t *cp,	/* cache to access */
+cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	     enum mem_cmd cmd,		/* access type, Read or Write */
 	     md_addr_t addr,		/* address of access */
 	     void *vp,			/* ptr to buffer for input/output */
 	     int nbytes,		/* number of bytes to access */
 	     tick_t now,		/* time of access */
 	     byte_t **udata,		/* for return of user data ptr */
-	     md_addr_t *repl_addr)	/* for address of replaced block */
+	     md_addr_t *repl_addr,	/* for address of replaced block */
+	     int pdp) 			/* drd:PDP on or off */
 {
   byte_t *p = vp;
   md_addr_t tag = CACHE_TAG(cp, addr);
@@ -553,8 +567,10 @@ cache_access(struct cache_t *cp,	/* cache to access */
   /* check for a fast hit: access to same block */
   if (CACHE_TAGSET(cp, addr) == cp->last_tagset)
     {
-      /* hit in the same block */
       blk = cp->last_blk;
+      if(pdp && blk->rpd>0){ blk->rpd--;
+  	//printf("PDP:hit block(%lld) rpd=%d\n",cp->last_tagset,blk->rpd);
+	}
       goto cache_fast_hit;
     }
     
@@ -567,8 +583,11 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	   blk;
 	   blk=blk->hash_next)
 	{
-	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID))
-	    goto cache_hit;
+	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
+      		if(pdp && blk->rpd>0){ blk->rpd--;
+  		//printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
+		}
+	    goto cache_hit;}
 	}
     }
   else
@@ -578,8 +597,11 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	   blk;
 	   blk=blk->way_next)
 	{
-	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID))
-	    goto cache_hit;
+	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
+      		if(pdp && blk->rpd>0) {blk->rpd--;
+  		//printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
+		}
+	    goto cache_hit;}
 	}
     }
 
@@ -604,9 +626,12 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	   blk=blk->way_next,bindex++)
 	{
 		if(blk->rpd>max_rpd) max_index=bindex; /* TODO:For Inclusive cache */
-		if(blk->rpd==0) repl=CACHE_BINDEX(cp, cp->sets[set].blks, bindex); 
+		if(blk->rpd==0){ repl=CACHE_BINDEX(cp, cp->sets[set].blks, bindex); found_repl=1;}
 	}
 	if(found_repl==-1) return -1; /* No unprotected line found for non-inclusive cache */
+	//printf("PDP:evict block(%lld)\n",repl->tag);
+  	repl->rpd = cp->rd; /* drd: intialize rpd */
+  	//printf("PDP:miss block(%lld) rpd=%d\n",tag,repl->rpd);
 	}
 	break;
   case Random:
@@ -679,6 +704,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
   /* update block status */
   repl->ready = now+lat;
 
+
   /* link this entry back into the hash table */
   if (cp->hsize)
     link_htab_ent(cp, &cp->sets[set], repl);
@@ -691,7 +717,6 @@ cache_access(struct cache_t *cp,	/* cache to access */
   
   /* **HIT** */
   cp->hits++;
-
   /* copy data out of cache block, if block exists */
   if (cp->balloc)
     {
