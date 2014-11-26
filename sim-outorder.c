@@ -740,7 +740,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:dl1",
 		 "l1 data cache config, i.e., {<config>|none}",
-		 &cache_dl1_opt, "dl1:128:32:4:p",
+		 &cache_dl1_opt, "dl1:128:32:4:l",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,

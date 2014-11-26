@@ -532,7 +532,7 @@ cache_access(struct cache_t *cp,        /* cache to access */
    user data is attached to blocks */
 unsigned int				/* latency of access in cycles */
 cache_access_pdp(struct cache_t *cp,	/* cache to access */
-	     enum mem_cmd cmd,		/* access type, Read or Write */
+             enum mem_cmd cmd,          /* access type, Read or Write */
 	     md_addr_t addr,		/* address of access */
 	     void *vp,			/* ptr to buffer for input/output */
 	     int nbytes,		/* number of bytes to access */
@@ -546,7 +546,8 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
   md_addr_t set = CACHE_SET(cp, addr);
   md_addr_t bofs = CACHE_BLK(cp, addr);
   struct cache_blk_t *blk, *repl;
-  int lat = 0;
+  int lat = 0,cnt,c;
+  struct pdp_n *n,*t;
 
   /* default replacement address */
   if (repl_addr)
@@ -569,7 +570,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
     {
       blk = cp->last_blk;
       if(pdp && blk->rpd>0){ blk->rpd--;
-  	//printf("PDP:hit block(%lld) rpd=%d\n",cp->last_tagset,blk->rpd);
+  	printf("PDP:hit block(%lld) rpd=%d\n",cp->last_tagset,blk->rpd);
 	}
       goto cache_fast_hit;
     }
@@ -585,7 +586,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	{
 	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
       		if(pdp && blk->rpd>0){ blk->rpd--;
-  		//printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
+  		printf("PDP:hash hit block(%lld) rpd=%d\n",tag,blk->rpd);
 		}
 	    goto cache_hit;}
 	}
@@ -599,8 +600,40 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	{
 	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
       		if(pdp && blk->rpd>0) {blk->rpd--;
-  		//printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
+  		printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
 		}
+	 if(cp->sets[set].n_max==0){
+			struct pdp_n* new=(struct pdp_n*)malloc(sizeof(struct pdp_n));
+			new->addr=tag;
+			new->next=cp->sets[set].head;
+			cp->sets[set].head=new;
+			cp->sets[set].tail=new;
+			cp->sets[set].n_max++;
+	 }else{
+	   for(n=cp->sets[set].head,cnt=0; n; cnt++,n=n->next)
+	   { if(n->addr==tag){
+			int reuse_dist=cnt;
+			cp->counter[cnt]++;
+		}
+		if(cp->sets[set].n_max==256){
+			for(t=cp->sets[set].head,c=0; t; c++,t=t->next)
+				if(c==255){
+					free(cp->sets[set].tail);
+					cp->sets[set].tail=t;
+					cp->sets[set].n_max--;
+				}
+		
+				
+		}
+		printf("[%d:%lld]",cnt,n->addr);
+	   }
+			struct pdp_n* new=(struct pdp_n*)malloc(sizeof(struct pdp_n));
+			new->addr=tag;
+			new->next=cp->sets[set].head;
+			cp->sets[set].head=new;
+			cp->sets[set].n_max++;
+	}
+		printf("\n");
 	    goto cache_hit;}
 	}
     }
@@ -631,7 +664,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	if(found_repl==-1) return -1; /* No unprotected line found for non-inclusive cache */
 	//printf("PDP:evict block(%lld)\n",repl->tag);
   	repl->rpd = cp->rd; /* drd: intialize rpd */
-  	//printf("PDP:miss block(%lld) rpd=%d\n",tag,repl->rpd);
+  	printf("PDP:miss block(%lld) rpd=%d\n",tag,repl->rpd);
 	}
 	break;
   case Random:

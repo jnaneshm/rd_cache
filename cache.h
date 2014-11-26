@@ -133,7 +133,17 @@ struct cache_blk_t
 				   should probably be a multiple of 8 */
   int rpd;  /* drd:Remaining PD */
 };
-
+struct pdp_n{
+	md_addr_t addr;
+	struct pdp_n *next;
+};
+struct pdp_q
+{
+	struct pdp_n *head;
+	struct pdp_n *tail;
+	struct pdp_n *next;
+	
+};
 /* cache set definition (one or more blocks sharing the same set index) */
 struct cache_set_t
 {
@@ -144,6 +154,10 @@ struct cache_set_t
   struct cache_blk_t *blks;	/* cache blocks, allocated sequentially, so
 				   this pointer can also be used for random
 				   access to cache blocks */
+  //struct pdp_q queue[1];
+	struct pdp_n *head;
+	struct pdp_n *tail;
+	int n_max;
 };
 
 /* cache definition */
@@ -207,11 +221,11 @@ struct cache_t
 
   /* data blocks */
   byte_t *data;			/* pointer to data blocks allocation */
-
+  int rd; /* drd: reuse distance */
+  int counter[256];
   /* NOTE: this is a variable-size tail array, this must be the LAST field
      defined in this structure! */
   struct cache_set_t sets[1];	/* each entry is a set */
-  int rd; /* drd: reuse distance */
 };
 /* create and initialize a general cache structure */
 struct cache_t *                        /* pointer to cache created */
@@ -282,6 +296,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
 	     tick_t now,		/* time of access */
 	     byte_t **udata,		/* for return of user data ptr */
 	     md_addr_t *repl_addr);	/* for address of replaced block */
+
 unsigned int                            /* latency of access in cycles */
 cache_access_pdp(struct cache_t *cp,    /* cache to access */
              enum mem_cmd cmd,          /* access type, Read or Write */
