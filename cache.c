@@ -569,11 +569,13 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
   if (CACHE_TAGSET(cp, addr) == cp->last_tagset)
     {
       blk = cp->last_blk;
-      if(pdp && blk->rpd>0){ blk->rpd--;
-  	printf("PDP:hit block(%lld) rpd=%d\n",cp->last_tagset,blk->rpd);
-	}
       goto cache_fast_hit;
     }
+      for (blk=cp->sets[set].way_head;
+	   blk;
+	   blk=blk->way_next){
+      		if(pdp && blk->rpd>0) blk->rpd--;
+	  }
     
   if (cp->hsize)
     {
@@ -585,9 +587,6 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	   blk=blk->hash_next)
 	{
 	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
-      		if(pdp && blk->rpd>0){ blk->rpd--;
-  		printf("PDP:hash hit block(%lld) rpd=%d\n",tag,blk->rpd);
-		}
 	    goto cache_hit;}
 	}
     }
@@ -599,10 +598,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	   blk=blk->way_next)
 	{
 	  if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)){
-      		if(pdp && blk->rpd>0) {blk->rpd--;
-  		printf("PDP:hit block(%lld) rpd=%d\n",tag,blk->rpd);
-		}
-	 if(cp->sets[set].n_max==0){
+	 /*if(cp->sets[set].n_max==0){
 			struct pdp_n* new=(struct pdp_n*)malloc(sizeof(struct pdp_n));
 			new->addr=tag;
 			new->next=cp->sets[set].head;
@@ -633,7 +629,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 			cp->sets[set].head=new;
 			cp->sets[set].n_max++;
 	}
-		printf("\n");
+		printf("\n");*/
 	    goto cache_hit;}
 	}
     }
@@ -664,7 +660,7 @@ cache_access_pdp(struct cache_t *cp,	/* cache to access */
 	if(found_repl==-1) return -1; /* No unprotected line found for non-inclusive cache */
 	//printf("PDP:evict block(%lld)\n",repl->tag);
   	repl->rpd = cp->rd; /* drd: intialize rpd */
-  	printf("PDP:miss block(%lld) rpd=%d\n",tag,repl->rpd);
+  	//printf("PDP:miss block(%lld) rpd=%d\n",tag,repl->rpd);
 	}
 	break;
   case Random:
